@@ -7,7 +7,9 @@ entity pipeline_registers is
     Port (
         clk         : in  STD_LOGIC;
         reset       : in  STD_LOGIC;
-        stall       : in  STD_LOGIC;
+        start_stall : in  STD_LOGIC;
+        stall_counter : in integer;
+        
         -- IF/ID pipeline registers
         if_id_reg_write : in STD_LOGIC;
         if_id_alu_src : in STD_LOGIC;
@@ -109,7 +111,7 @@ begin
             mem_wb_alu_result  <= (others => '0');
             
         elsif rising_edge(clk) then
-            if stall = '1' then  -- if stall, then insert a NOP
+            if (start_stall = '1' or stall_counter = 3 or stall_counter = 2) then  -- if stall, then insert a NOP
                 id_ex_reg_write <= '0';
                 id_ex_alu_src <= '0';
                 id_ex_mem_read <= '0';

@@ -4,6 +4,7 @@ vhdl xil_defaultlib  \
 "../../../../alu_control.vhdl" \
 "../../../../control_unit.vhdl" \
 "../../../../data_mem.vhdl" \
+"../../../../hazard_detection_unit.vhdl" \
 "../../../../immediate_generator.vhdl" \
 "../../../../instr_mem.vhdl" \
 "../../../../pc.vhdl" \

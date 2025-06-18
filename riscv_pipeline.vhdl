@@ -42,6 +42,7 @@ architecture Behavioral of riscv_pipeline is
     signal wb_data      : STD_LOGIC_VECTOR(31 downto 0);
     signal stall, start_stall        : STD_LOGIC;
     signal stall_counter : integer range 0 to 3 := 0;
+    signal clock_counter : integer := 1;
  
     
     component pc_live 
@@ -125,7 +126,8 @@ architecture Behavioral of riscv_pipeline is
         Port (
             clk         : in  STD_LOGIC;
             reset       : in  STD_LOGIC;
-            stall       : in  STD_LOGIC;
+            start_stall : in  STD_LOGIC;
+            stall_counter : in integer;
             
             -- IF/ID pipeline registers
             if_id_reg_write : in STD_LOGIC;
@@ -184,17 +186,32 @@ architecture Behavioral of riscv_pipeline is
     end component;
 
     -- Hazard detection unit
---    component hazard_detection_unit is
---        Port (
---            id_ex_mem_read : in STD_LOGIC;
---            id_ex_rd       : in STD_LOGIC_VECTOR(4 downto 0);
---            if_id_rs1      : in STD_LOGIC_VECTOR(4 downto 0);
---            if_id_rs2      : in STD_LOGIC_VECTOR(4 downto 0);
---            start_stall    : out STD_LOGIC
---        );
---    end component;
+    component hazard_detection_unit is
+        Port (
+            reset :          in STD_LOGIC;
+            id_ex_mem_read : in STD_LOGIC;
+            id_ex_load_addr : in STD_LOGIC;
+            if_id_instr    : in STD_LOGIC_VECTOR(31 downto 0);
+            id_ex_instr    : in STD_LOGIC_VECTOR(31 downto 0);
+            id_ex_rd       : in STD_LOGIC_VECTOR(4 downto 0);
+            if_id_rs1      : in STD_LOGIC_VECTOR(4 downto 0);
+            if_id_rs2      : in STD_LOGIC_VECTOR(4 downto 0);
+            stall_counter  : in integer range 0 to 3 := 0;
+            start_stall    : out STD_LOGIC
+        );
+    end component;
     
 begin
+
+    -- clock counter process
+    process(clk, reset)
+    begin
+        if reset = '1' then
+            clock_counter <= 1;
+        elsif rising_edge(clk) then
+            clock_counter <= clock_counter + 1;
+        end if;
+    end process;
 
     -- PC logic
     pc_inst: pc_live
@@ -204,12 +221,10 @@ begin
             pc_in  => next_pc,
             pc_out => pc
         );
-    next_pc <=     pc when (stall_counter = 3) else   -- stall case
-                   std_logic_vector(signed(ex_mem_pc) + signed(ex_mem_imm)) when (stall_counter = 2 and ex_mem_branch = '1' and ex_mem_reg1_data /= ex_mem_reg2_data) else -- branch case
-                   std_logic_vector(signed(ex_mem_pc) + signed(ex_mem_imm)) when (stall_counter = 2 and ex_mem_jump = '1') else  -- jump case
-                   pc when stall_counter = 2 else
-                   next_pc when stall_counter = 1 else
-                   std_logic_vector(unsigned(if_id_pc) + 4); -- note: this happens during IF !!! 1st two during MEM
+    next_pc <=  std_logic_vector(signed(ex_mem_pc) + signed(ex_mem_imm)) when (ex_mem_branch = '1' and ex_mem_reg1_data /= ex_mem_reg2_data) else -- branch case
+                std_logic_vector(signed(ex_mem_pc) + signed(ex_mem_imm)) when (ex_mem_jump = '1') else  -- jump case
+                pc when (start_stall = '1' or stall_counter = 3 or stall_counter = 2) else   -- stall case
+                std_logic_vector(unsigned(if_id_pc) + 4); -- note: this happens during IF !!! 1st two during MEM
                                       
     -- update temporary registers to support pipelining (state machine no longer needed... as each instruction is at a different state)
     -- Adding stall... if stall, then do not move the pipeline registers, and insert NOP instead
@@ -217,7 +232,8 @@ begin
         port map (
             clk    => clk,
             reset  => reset,
-            stall  => stall,
+            start_stall => start_stall,
+            stall_counter => stall_counter,
             -- IF/ID pipeline registers
             if_id_reg_write => if_id_reg_write,
             if_id_alu_src => if_id_alu_src,
@@ -306,16 +322,21 @@ begin
         );
         
     -- Instantiate hazard detection unit
---    hazard_unit: hazard_detection_unit
---        port map (
---            id_ex_mem_read => id_ex_mem_read,
---            id_ex_rd       => id_ex_rd,
---            if_id_rs1      => if_id_rs1,
---            if_id_rs2      => if_id_rs2,
---            start_stall    => start_stall
---        );
+    hazard_unit: hazard_detection_unit
+        port map (
+            reset => reset,
+            id_ex_mem_read => id_ex_mem_read,
+            id_ex_load_addr => id_ex_load_addr,
+            if_id_instr    => if_id_instr,
+            id_ex_instr    => id_ex_instr,
+            id_ex_rd       => id_ex_rd,
+            if_id_rs1      => if_id_rs1,
+            if_id_rs2      => if_id_rs2,
+            stall_counter  => stall_counter,
+            start_stall    => start_stall
+        );
     -- temporary test... stall each instruction 3 cycles
-    start_stall <= '1' when stall_counter = 0 else '0';
+    --start_stall <= '1' when stall_counter = 0 else '0';
         
     -- Stall counter process
     process(clk)
@@ -323,7 +344,7 @@ begin
         if rising_edge(clk) then
             if reset = '1' then
                 stall_counter <= 0;
-            elsif start_stall = '1' and stall_counter = 0 then
+            elsif start_stall = '1' then
                 stall_counter <= 3;
             elsif stall_counter > 0 then
                 stall_counter <= stall_counter - 1;
